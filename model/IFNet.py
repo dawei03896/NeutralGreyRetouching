@@ -3,6 +3,7 @@ import torch.nn as nn
 import torch.nn.functional as F
 from model.warplayer import warp
 from model.refine import *
+from model.unet_deploy import UNet
 
 def deconv(in_planes, out_planes, kernel_size=4, stride=2, padding=1):
     return nn.Sequential(
@@ -106,3 +107,40 @@ class IFNet(nn.Module):
         res = tmp[:, :3] * 2 - 1
         merged[2] = torch.clamp(merged[2] + res, 0, 1)
         return flow_list, mask_list[2], merged, flow_teacher, merged_teacher, loss_distill
+
+
+class IFNet_Retouching(nn.Module):
+    def __init__(self):
+        super(IFNet_Retouching, self).__init__()
+        self.block_stu = UNet(3, 3, deep_supervision=True)
+        self.block_tea = UNet(9, 3, deep_supervision=True)
+
+    def warp(self, tenInput, tenFlow):
+        return (1 - 2 * tenFlow) * tenInput * tenInput + 2 * tenFlow * tenInput
+
+    def forward(self, real_A, real_B):
+        flow_stu, flow_stu_11, flow_stu_22, flow_stu_33, flow_stu_44 = self.block_stu(real_A)
+        merged_stu = self.warp(real_A, flow_stu)
+        merged_stu_11 = self.warp(real_A, flow_stu_11)
+        merged_stu_22 = self.warp(real_A, flow_stu_22)
+        merged_stu_33 = self.warp(real_A, flow_stu_33)
+        merged_stu_44 = self.warp(real_A, flow_stu_44)
+        flow_tea, flow_tea_11, flow_tea_22, flow_tea_33, flow_tea_44 = self.block_tea(torch.cat((real_A, merged_stu, real_B), 1))
+        merged_tea = self.warp(real_A, flow_tea)
+        merged_tea_11 = self.warp(real_A, flow_tea_11)
+        merged_tea_22 = self.warp(real_A, flow_tea_22)
+        merged_tea_33 = self.warp(real_A, flow_tea_33)
+        merged_tea_44 = self.warp(real_A, flow_tea_44)
+        loss_mask = ((merged_stu - real_B).abs().mean(1, True) > (merged_tea - real_B).abs().mean(1, True) + 0.01).float().detach()
+        loss_distill_0 = (((flow_tea.detach() - flow_stu) ** 2).mean(1, True) ** 0.5 * loss_mask).mean()
+        loss_mask = ((merged_stu_11 - real_B).abs().mean(1, True) > (merged_tea_11 - real_B).abs().mean(1, True) + 0.01).float().detach()
+        loss_distill_11 = (((flow_tea_11.detach() - flow_stu_11) ** 2).mean(1, True) ** 0.5 * loss_mask).mean()
+        loss_mask = ((merged_stu_22 - real_B).abs().mean(1, True) > (merged_tea_22 - real_B).abs().mean(1, True) + 0.01).float().detach()
+        loss_distill_22 = (((flow_tea_22.detach() - flow_stu_22) ** 2).mean(1, True) ** 0.5 * loss_mask).mean()
+        loss_mask = ((merged_stu_33 - real_B).abs().mean(1, True) > (merged_tea_33 - real_B).abs().mean(1, True) + 0.01).float().detach()
+        loss_distill_33 = (((flow_tea_33.detach() - flow_stu_33) ** 2).mean(1, True) ** 0.5 * loss_mask).mean()
+        loss_mask = ((merged_stu_44 - real_B).abs().mean(1, True) > (merged_tea_44 - real_B).abs().mean(1, True) + 0.01).float().detach()
+        loss_distill_44 = (((flow_tea_44.detach() - flow_stu_44) ** 2).mean(1, True) ** 0.5 * loss_mask).mean()
+        loss_distill = loss_distill_0 + loss_distill_11 + loss_distill_22 + loss_distill_33 + loss_distill_44
+        return merged_stu, merged_stu_11, merged_stu_22, merged_stu_33, merged_stu_44, merged_tea, merged_tea_11, merged_tea_22, merged_tea_33, merged_tea_44, flow_stu, flow_tea, loss_distill
+

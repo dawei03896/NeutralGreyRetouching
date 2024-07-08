@@ -1,0 +1,2 @@
+# CUDA_VISIBLE_DEVICES=1,2 python -m torch.distributed.launch --nproc_per_node=2 train.py --world_size=4 --dataroot /mnt/liudawei/project/pytorch-CycleGAN-and-pix2pix/datasets/retouchs --phase train_clean
+CUDA_VISIBLE_DEVICES=1,2,3,4 python -m torch.distributed.launch --nproc_per_node=4 train.py --world_size=4 --dataroot /mnt/liudawei/project/pytorch-CycleGAN-and-pix2pix/datasets/retouchs --phase train_clean --batch_size 5 --direction BtoA
